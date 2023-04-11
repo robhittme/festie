@@ -39,7 +39,6 @@ var (
 
 func generateRandomString(length int) string {
   var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-
   rand.Seed(time.Now().UnixNano())
 
   b := make([]rune, length)
