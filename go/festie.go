@@ -1,167 +1,133 @@
-package main
+package main 
 
 import (
-  "io/ioutil"
-  "encoding/json"
-  "log"
-  "net/http"
-  "net/url"
-  "time"
-  "math/rand"
+  "fmt"
   "bytes"
-  "encoding/base64"
-  "os"
-  godotenv "github.com/joho/godotenv"
+  "net/http"
+  "encoding/json"
 )
 
-type AuthResponse struct {
-  AccessToken  string `json:"access_token"`
-  RefreshToken string `json:"refresh_token"`
+type SpotifyToken struct {
+  AccessToken string `json:"access_token"`
+  TokenType string `json:"token_type"`
+  ExpiresIn int `json:"expires_in"`
 }
 
-func init() {
-  err := godotenv.Load()
+type SpotifySearchArtistResponse struct {
+    Artists struct {
+        Href     string `json:"href"`
+        Items    []struct {
+            ExternalUrls struct {
+                Spotify string `json:"spotify"`
+            } `json:"external_urls"`
+            Followers struct {
+                Href  interface{} `json:"href"`
+                Total int64       `json:"total"`
+            } `json:"followers"`
+            Genres []string `json:"genres"`
+            Id     string   `json:"id"`
+            Images []struct {
+                Height int    `json:"height"`
+                Url    string `json:"url"`
+                Width  int    `json:"width"`
+            } `json:"images"`
+            Name       string `json:"name"`
+            Popularity int64  `json:"popularity"`
+            Type       string `json:"type"`
+            Uri        string `json:"uri"`
+        } `json:"items"`
+        Limit    int64       `json:"limit"`
+        Next     interface{} `json:"next"`
+        Offset   int64       `json:"offset"`
+        Previous interface{} `json:"previous"`
+        Total    int64       `json:"total"`
+    } `json:"artists"`
+}
+
+func getTopArtistTracks(at string, artistId string) {
+  // depending on the festival you might need to change the country ?
+  url := "https://api.spotify.com/v1/artists/" + artistId + "/top-tracks?country=US"
+  req, err := http.NewRequest("GET", url, nil)
   if err != nil {
-    log.Fatalf("Error loading .env file: %v", err)
+    panic(err)
   }
-}
-
-var (
-  clientID     = os.Getenv("CLIENT_ID")
-  clientSecret = os.Getenv("CLIENT_SECRET")
-  redirectURI  = "http://localhost:8888/callback"
-  stateKey     = "spotify_auth_state"
-  authURL        = "https://accounts.spotify.com/authorize"
-  tokenURL       = "https://accounts.spotify.com/api/token"
-  refreshTokenURL = "https://accounts.spotify.com/api/token"
-  meURL          = "https://api.spotify.com/v1/me"
-)
-
-func generateRandomString(length int) string {
-  var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-
-  rand.Seed(time.Now().UnixNano())
-
-  b := make([]rune, length)
-  for i := range b {
-    b[i] = letterRunes[rand.Intn(len(letterRunes))]
-  }
-  return string(b)
-}
-
-func authHandler(w http.ResponseWriter, r *http.Request) {
-  state := generateRandomString(16)
-  cookie := http.Cookie{
-    Name:     stateKey,
-    Value:    state,
-    Path:     "/",
-    MaxAge:   3600,
-    HttpOnly: true,
-    Secure:   true,
-    SameSite: http.SameSiteLaxMode,
-  }
-
-  http.SetCookie(w, &cookie)
-
-  queryParams := url.Values{}
-  queryParams.Add("response_type", "code")
-  queryParams.Add("client_id", clientID)
-  queryParams.Add("client_secret", clientSecret)
-  queryParams.Add("redirect_uri", redirectURI)
-  queryParams.Add("state", state)
-  queryParams.Add("scope", "user-read-private user-read-email")
-  authURL := authURL + "?" + queryParams.Encode()
-
-  // Redirect the user to the authorization URL
-  http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
-  w.Write([]byte("success"))
-}
-
-
-func cbHandler(w http.ResponseWriter, r *http.Request) {
-  queryStrings := r.URL.Query()
-  state := queryStrings.Get("state")
-  code := queryStrings.Get("code")
-  storedState, err := r.Cookie(stateKey)
-  if err != nil || state == "" || state != storedState.Value {
-    http.Redirect(w, r, "/#?mismatched", http.StatusSeeOther)
-    return
-  }
-  requestBody := url.Values{}
-  requestBody.Add("code", code)
-  requestBody.Add("redirect_uri", redirectURI)
-  requestBody.Add("grant_type", "authorization_code")
-
-  log.Println(requestBody)
-  req, err := http.NewRequest(http.MethodPost, tokenURL,  bytes.NewBufferString(requestBody.Encode()))
-  if err != nil {
-    http.Error(w, err.Error(), http.StatusInternalServerError)
-    return
-  }
-  authHeader := "Basic " + base64.StdEncoding.EncodeToString([]byte(clientID+":"+clientSecret))
-
-  req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-  req.Header.Set("Authorization", authHeader)
+  req.Header.Set("Authorization", "Bearer " + at)
 
   client := &http.Client{}
-  authResp, err := client.Do(req)
+  resp, err := client.Do(req)
   if err != nil {
-    log.Println("error creating", err)
-    http.Error(w, err.Error(), http.StatusInternalServerError)
+    panic(err)
   }
-  defer authResp.Body.Close()
-  if authResp.StatusCode != http.StatusOK {
-    http.Redirect(w, r, "/#?invalid_token", http.StatusSeeOther)
+  defer resp.Body.Close()
+  var responseBody map[string]interface{}
+  err = json.NewDecoder(resp.Body).Decode(&responseBody)
+  if err != nil {
+    panic(err)
   }
-  var authBody struct {
-    AccessToken  string `json:"access_token"`
-    RefreshToken string `json:"refresh_token"`
+  responseJson, err := json.MarshalIndent(responseBody, "", " ")
+  if err != nil {
+    panic(err)
   }
-  bodyBytes, err := ioutil.ReadAll(authResp.Body)
 
-  log.Println(string(bodyBytes))
-  err = json.NewDecoder(authResp.Body).Decode(&authBody)
-  if err != nil {
-    http.Error(w, err.Error(), http.StatusInternalServerError)
-    return
-  }
-  options := url.Values{}
-  options.Set("Authorization", "Bearer "+authBody.AccessToken)
-  userReq, err := http.NewRequest(http.MethodGet, meURL, nil)
-  if err != nil {
-    http.Error(w, err.Error(), http.StatusInternalServerError)
-    return
-  }
-  userResp, err := client.Do(userReq)
-  if err != nil {
-    http.Error(w, err.Error(), http.StatusInternalServerError)
-    return
-  }
-  defer userResp.Body.Close()
-  if authResp.StatusCode == http.StatusOK {
-    var me struct {
-      ID string `json:"id"`
-    }
+  fmt.Println(string(responseJson))
+}
 
-    err = json.NewDecoder(userResp.Body).Decode(&me)
-    if err != nil {
-      http.Error(w, err.Error(), http.StatusInternalServerError)
-      return
-    }
-    log.Println("welcome", me.ID)
-    return
+func getArtistId(artist SpotifySearchArtistResponse) string {
+  return artist.Artists.Items[0].Id 
+}
+
+func searchArtists(at string, artist string) SpotifySearchArtistResponse {
+  url := "https://api.spotify.com/v1/search?q=" + artist + "&type=artist"
+  req, err := http.NewRequest("GET", url, nil)
+  if err != nil {
+    panic(err)
   }
-  log.Fatal("something is very wrong")
+  req.Header.Set("Authorization", "Bearer " + at)
+
+  client := &http.Client{}
+  resp, err := client.Do(req)
+  if err != nil {
+    panic(err)
+  }
+  defer resp.Body.Close()
+  var responseBody SpotifySearchArtistResponse
+  err = json.NewDecoder(resp.Body).Decode(&responseBody)
+  if err != nil {
+    panic(err)
+  }
+  return responseBody
 }
 
 func main() {
-  mux := http.NewServeMux()
-  mux.HandleFunc("/login", authHandler)
-  mux.HandleFunc("/callback", cbHandler)
-  //http.HandleFunc("/refresh_token", handleRefreshToken)
+  url := "https://accounts.spotify.com/api/token"
+  client_id := "a3c992b0acc349bf9195e18036aa21d9"
+  client_secret := "3051aae40b3842818b08a3a80c87e521"
+  payload := bytes.NewBuffer([]byte("grant_type=client_credentials&client_id=" + client_id + "&client_secret=" + client_secret))
+  req, err := http.NewRequest("POST", url, payload)
+  if err != nil {
+    panic(err)
+  }
 
+  req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-  log.Print("Listening on port 8888")
-  log.Fatal(http.ListenAndServe(":8888", mux))
+  client := &http.Client{}
+  resp, err := client.Do(req)
+  if err != nil {
+    panic(err)
+  }
+  defer resp.Body.Close()
+  var responseBody SpotifyToken 
+  err = json.NewDecoder(resp.Body).Decode(&responseBody)
+  if err != nil {
+    panic(err)
+  }
+  artistSearch := searchArtists(responseBody.AccessToken, "tycho")
+  //fmt.Printf("artistSearch %+v", getArtistId(artistSearch))
+  getTopArtistTracks(responseBody.AccessToken, getArtistId(artistSearch))
+  //responseJson, err := json.MarshalIndent(responseBody, "", " ")
+  //if err != nil {
+  //  panic(err)
+  //}
 
+  //fmt.Println(string(responseJson))
 }
